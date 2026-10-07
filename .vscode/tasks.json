@@ -4,9 +4,9 @@
     {
       "label": "Build - Build project",
       "type": "shell",
-      "command": "${config:idf.pythonBinPath} ${config:idf.espIdfPath}/tools/idf.py build",
+      "command": "${config:idf.pythonBinPath} ${config:idf.espIdfPath}/tools/idf.py -B ${config:idf.buildPath} build",
       "windows": {
-        "command": "${config:idf.pythonBinPathWin} ${config:idf.espIdfPathWin}\\tools\\idf.py build",
+        "command": "${config:idf.pythonBinPathWin} ${config:idf.espIdfPathWin}\\tools\\idf.py -B ${config:idf.buildPath} build",
         "options": {
           "env": {
             "PATH": "${env:PATH};${config:idf.customExtraPaths}"
@@ -234,7 +234,7 @@
       "args": [
         "${command:espIdf.getExtensionPath}/esp_debug_adapter/debug_adapter_main.py",
         "-e",
-        "${workspaceFolder}/build/${command:espIdf.getProjectName}.elf",
+        "${config:idf.buildPath}/${command:espIdf.getProjectName}.elf",
         "-s",
         "$OPENOCD_SCRIPTS",
         "-dn",

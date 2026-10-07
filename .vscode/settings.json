@@ -9,10 +9,11 @@
         "IDF_TARGET": "esp32c2"
     },
     "idf.espIdfPathWin": "e:\\esp32\\v5.4\\esp-idf",
+    "idf.buildPath": "E:\\esp32\\esp32c2phy-build",
     "idf.openOcdConfigs": [
         "board/esp32c2-bridge.cfg"
     ],
-    "idf.portWin": "COM20",
+    "idf.portWin": "COM16",
     "idf.pythonBinPathWin": "E:\\esp32\\Espressif\\python_env\\idf5.3_py3.11_env\\Scripts\\python.exe",
     "idf.toolsPathWin": "E:\\esp32\\Espressif",
     "files.associations": {
