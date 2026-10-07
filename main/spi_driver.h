@@ -52,5 +52,6 @@ typedef struct __attribute__((packed))
 
 esp_err_t spi_init();
 esp_err_t spi_write(p_spi_buf *buf);
+esp_err_t spi_write_nowait(p_spi_buf *buf);
 
 #endif

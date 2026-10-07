@@ -30,6 +30,8 @@ static int host_rcv_pkt(uint8_t *data, uint16_t len)
 {
     p_spi_buf buf;
     buf.data = malloc(len);
+    if (!buf.data)
+        return ESP_FAIL;
     memcpy(buf.data, data, len);
     buf.len = len;
     buf.type = ESP_BT;

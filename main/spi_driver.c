@@ -12,8 +12,6 @@
 #include "esp_log.h"
 #include <unistd.h>
 
-WORD_ALIGNED_ATTR uint8_t sendbuf[SPI_BUF_LEN] = {0};
-WORD_ALIGNED_ATTR uint8_t recvbuf[SPI_BUF_LEN] = {0};
 
 static QueueHandle_t spi_tx_queue;
 
@@ -114,70 +112,99 @@ static esp_err_t IRAM_ATTR process_rx(spi_buf *buf)
     return ESP_OK;
 }
 
+/* Две транзакции всегда стоят в драйвере SPI: пока обрабатывается принятый кадр
+ * одной, вторая уже ждёт мастера (STM32), и он не простаивает */
+#define SPI_SLOTS 2
+static WORD_ALIGNED_ATTR uint8_t slot_tx[SPI_SLOTS][SPI_BUF_LEN];
+static WORD_ALIGNED_ATTR uint8_t slot_rx[SPI_SLOTS][SPI_BUF_LEN];
+static spi_slave_transaction_t slot_trans[SPI_SLOTS];
+static int data_queued; // транзакций с данными в драйвере
+
+static void IRAM_ATTR update_dataready(void)
+{
+    if (data_queued > 0 || uxQueueMessagesWaiting(spi_tx_queue) > 0)
+    {
+        set_dataready_gpio();
+        return;
+    }
+    reset_dataready_gpio();
+    // кадр мог прийти между проверкой и сбросом
+    if (uxQueueMessagesWaiting(spi_tx_queue) > 0)
+        set_dataready_gpio();
+}
+
+static void IRAM_ATTR slot_queue(int i)
+{
+    spi_slave_transaction_t *t = &slot_trans[i];
+    spi_buf *buf = (spi_buf *)slot_tx[i];
+    p_spi_buf tx;
+    t->rx_buffer = slot_rx[i];
+    t->tx_buffer = buf;
+    t->length = SPI_BUF_LEN * SPI_BITS_PER_WORD;
+    t->user = NULL;
+    if (xQueueReceive(spi_tx_queue, &tx, 0) == pdTRUE)
+    {
+        ((uint32_t *)buf)[0] = *((uint32_t *)&tx); // type и len
+        uint32_t l = (tx.len / 4) + 1;
+        uint32_t *dst = (uint32_t *)buf->data;
+        uint32_t *src = (uint32_t *)tx.data;
+        while (l)
+        {
+            *(dst++) = *(src++);
+            l--;
+        }
+        if (tx.free_data_fn)
+        {
+            if (tx.eb)
+                tx.free_data_fn(tx.eb); // wifi packet (esp_wifi_internal_free_rx_buffer)
+            else
+                tx.free_data_fn(tx.data); // other (vPortFree)
+        }
+        t->user = (void *)1;
+        data_queued++;
+    }
+    else
+    {
+        ((uint32_t *)buf)[0] = 0;
+    }
+    spi_slave_queue_trans(ESP_SPI_CONTROLLER, t, portMAX_DELAY);
+    update_dataready();
+}
+
 static void IRAM_ATTR spi_transaction_task(void *pvParameters)
 {
-    spi_slave_transaction_t spi_trans;
-    spi_slave_transaction_t *rcv_trans;
-    esp_err_t ret = ESP_OK;
-    p_spi_buf tx;
-    spi_buf *buf;
-
+    spi_slave_transaction_t *done;
+    for (int i = 0; i < SPI_SLOTS; i++)
+        slot_queue(i);
     for (;;)
     {
-        spi_trans.rx_buffer = recvbuf;
-        spi_trans.length = SPI_BUF_LEN * SPI_BITS_PER_WORD;
-        ret = xQueueReceive(spi_tx_queue, &tx, 0);
-        if (ret == pdTRUE)
-        {
-            buf = (spi_buf *)sendbuf;
-            // buf->len = tx.len;
-            // buf->type = tx.type;
-            ((uint32_t*)buf)[0] = *((uint32_t*)&tx);
-            // memcpy(buf->data, tx.data, tx.len);
-            uint32_t l = (tx.len / 4) + 1;
-            uint32_t *dst = (uint32_t *)buf->data;
-            uint32_t *src = (uint32_t *)tx.data;
-            while (l)
-            {
-                *(dst++) = *(src++);
-                l--;
-            }
-            if (tx.free_data_fn)
-            {
-                if (tx.eb)
-                    tx.free_data_fn(tx.eb); // wifi packet (esp_wifi_internal_free_rx_buffer)
-                else
-                    tx.free_data_fn(tx.data); // other (vPortFree)
-            }
-            spi_trans.tx_buffer = buf;
-            ret = spi_slave_queue_trans(ESP_SPI_CONTROLLER, &spi_trans, portMAX_DELAY);
-            set_dataready_gpio();
-        }
-        else
-        {
-            reset_dataready_gpio();
-            ((uint32_t *)sendbuf)[0] = 0; // memset
-            spi_trans.tx_buffer = sendbuf;
-            ret = spi_slave_queue_trans(ESP_SPI_CONTROLLER, &spi_trans, portMAX_DELAY);
-        }
-
-        ret = spi_slave_get_trans_result(ESP_SPI_CONTROLLER, &rcv_trans, portMAX_DELAY);
-        if (ret == ESP_OK && rcv_trans->rx_buffer == recvbuf)
-        {
-            buf = (spi_buf *)rcv_trans->rx_buffer;
-            ret = process_rx(buf);
-        }
+        if (spi_slave_get_trans_result(ESP_SPI_CONTROLLER, &done, portMAX_DELAY) != ESP_OK)
+            continue;
+        int i = done - slot_trans;
+        if (done->user)
+            data_queued--;
+        process_rx((spi_buf *)slot_rx[i]);
+        slot_queue(i);
     }
 }
 
 esp_err_t IRAM_ATTR spi_write(p_spi_buf *buf)
 {
     led_on();
-
     esp_err_t ret = xQueueSend(spi_tx_queue, buf, portMAX_DELAY) == pdTRUE ? ESP_OK : ESP_FAIL;
     set_dataready_gpio();
-
     return ret;
+}
+
+/* Без ожидания: для приёма из эфира. Колбэк Wi-Fi не должен ждать SPI — задача SPI
+ * сама может ждать отправки в эфир, а та — задачу Wi-Fi. Полная очередь — кадр
+ * выбрасывается, TCP его повторит */
+esp_err_t IRAM_ATTR spi_write_nowait(p_spi_buf *buf)
+{
+    if (xQueueSend(spi_tx_queue, buf, 0) != pdTRUE)
+        return ESP_FAIL;
+    set_dataready_gpio();
+    return ESP_OK;
 }
 
 esp_err_t spi_init()
@@ -242,7 +269,7 @@ esp_err_t spi_init()
     gpio_set_drive_capability(GPIO_MISO, GPIO_DRIVE_CAP_3);
     gpio_set_pull_mode(GPIO_MISO, GPIO_PULLDOWN_ONLY);
 
-    spi_tx_queue = xQueueCreate(4, sizeof(p_spi_buf));
+    spi_tx_queue = xQueueCreate(16, sizeof(p_spi_buf));
     assert(spi_tx_queue);
 
     assert(xTaskCreate(spi_transaction_task, "spi_transaction_task", 1024, NULL, 22, NULL) == pdTRUE);

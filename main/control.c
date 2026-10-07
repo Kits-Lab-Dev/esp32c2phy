@@ -24,6 +24,8 @@ static void send_event(CtrlMsgId id, uint32_t queue, int interface, void *data, 
 
     int l = len > 0 ? len : 0;
     buf.data = (uint8_t *)heap_caps_malloc(sizeof(ControlMsg) + l, MALLOC_CAP_8BIT); //pvPortMalloc(sizeof(ControlMsg) + l);
+    if (!buf.data)
+        return;
     buf.len = sizeof(ControlMsg) + l;
     buf.type = ESP_CONTROL;
     buf.eb = NULL;
@@ -885,6 +887,8 @@ esp_err_t IRAM_ATTR control_rx_process(uint8_t *data, uint16_t len)
         .data = (uint8_t *)heap_caps_malloc(msg->len, MALLOC_CAP_8BIT),//pvPortMalloc(msg->len),
         .free_data_fn = free //vPortFree
         };
+    if (!m.data && msg->len)
+        return ESP_FAIL;
     for (int i = 0; i != msg->len; i++)
     {
         m.data[i] = msgData[i];
