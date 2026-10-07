@@ -1,6 +1,6 @@
 # ESP32C2 PHY Interface
 
-Проект представляет собой интерфейс для работы с физическим уровнем (PHY) микроконтроллера ESP32-C2. Проект разработан с использованием ESP-IDF на основе [ESP-Hosted-FG](https://github.com/espressif/esp-hosted/tree/master/esp_hosted_fg)
+Проект представляет собой интерфейс для работы с физическим уровнем (PHY) микроконтроллера ESP32-C2. Проект разработан с использованием ESP-IDF на основе [ESP-Hosted-MCU](https://github.com/espressif/esp-hosted-mcu)
 
 ## Структура проекта
 
