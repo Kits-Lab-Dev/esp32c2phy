@@ -12,7 +12,6 @@
 #include "esp_log.h"
 #include <unistd.h>
 
-
 static QueueHandle_t spi_tx_queue;
 
 #define SPI_BITS_PER_WORD 8
@@ -112,8 +111,7 @@ static esp_err_t IRAM_ATTR process_rx(spi_buf *buf)
     return ESP_OK;
 }
 
-/* Две транзакции всегда стоят в драйвере SPI: пока обрабатывается принятый кадр
- * одной, вторая уже ждёт мастера (STM32), и он не простаивает */
+// пока обрабатывается одна транзакция, вторая уже ждёт мастера
 #define SPI_SLOTS 2
 static WORD_ALIGNED_ATTR uint8_t slot_tx[SPI_SLOTS][SPI_BUF_LEN];
 static WORD_ALIGNED_ATTR uint8_t slot_rx[SPI_SLOTS][SPI_BUF_LEN];
@@ -196,9 +194,7 @@ esp_err_t IRAM_ATTR spi_write(p_spi_buf *buf)
     return ret;
 }
 
-/* Без ожидания: для приёма из эфира. Колбэк Wi-Fi не должен ждать SPI — задача SPI
- * сама может ждать отправки в эфир, а та — задачу Wi-Fi. Полная очередь — кадр
- * выбрасывается, TCP его повторит */
+// для колбэка Wi-Fi: ожидание SPI в нём ведёт к взаимной блокировке
 esp_err_t IRAM_ATTR spi_write_nowait(p_spi_buf *buf)
 {
     if (xQueueSend(spi_tx_queue, buf, 0) != pdTRUE)

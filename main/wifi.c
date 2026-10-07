@@ -89,7 +89,6 @@ esp_err_t IRAM_ATTR wifi_rx_process(int interface, uint8_t *data, uint16_t len)
 
 #if (WIFI_RX_QUEUE_ENABLED)
 
-	// до wifi_init очереди нет, а без подключения кадр некуда отправить
 	if (!wifi_queue || (interface == ESP_STA && !station_connected) || (interface == ESP_AP && !softap_started))
 		return ESP_FAIL;
 	p_spi_buf buf;
@@ -107,8 +106,6 @@ esp_err_t IRAM_ATTR wifi_rx_process(int interface, uint8_t *data, uint16_t len)
 
 #else
 
-	// Без очереди и копии в куче: esp_wifi_internal_tx сам копирует кадр в буфер Wi-Fi.
-	// Буферы заняты — короткое ожидание (STM32 тем временем ждёт handshake), потом по тику
 	if (!((interface == ESP_STA && station_connected) || (interface == ESP_AP && softap_started)))
 		return ESP_FAIL;
 	for (int retry = 0; retry < 20; retry++)
@@ -127,13 +124,10 @@ esp_err_t IRAM_ATTR wifi_rx_process(int interface, uint8_t *data, uint16_t len)
 	return ret;
 }
 
-/* Буферы приёма Wi-Fi берутся из кучи, и пока кадры ждут отправки в SPI, она тает.
- * Ниже этого запаса кадр выбрасывается (TCP повторит и притормозит) — память
- * остаётся для BLE, точки доступа и управления */
+// запас кучи для BLE, точки доступа и управления
 #define RX_MIN_FREE_HEAP (10 * 1024)
 
-/* Кадр из эфира уходит в SPI прямо в буфере Wi-Fi (eb), без копии в куче:
- * буфер освобождается после копирования в транзакцию SPI (spi_driver.c) */
+// eb освобождается в spi_driver.c после копирования в транзакцию
 static void IRAM_ATTR send_to_host(int interface, uint8_t *data, uint16_t len, void *eb)
 {
 	if (heap_caps_get_free_size(MALLOC_CAP_8BIT) < RX_MIN_FREE_HEAP)
